@@ -57,7 +57,6 @@ selected_model = st.sidebar.selectbox(
     ],
     help="Choose Llama-3.3 for ultra-fast generation or DeepSeek R1 Qwen for advanced reasoning."
 )
-)
 
 st.sidebar.divider()
 st.sidebar.subheader("📧 Sender Email Settings (Gmail SMTP)")
