@@ -202,29 +202,44 @@ def send_cold_email(smtp_email, smtp_password, recipient_email, subject, body):
 def analyze_market(product_name, groq_client, model_name):
     prompt = f"""
     Aap ek Pakistani International Trade Expert hain. Product: {product_name}
-    Target export countries ki report dein strictly JSON format mein:
+    Target export countries ki report dein strictly valid JSON format mein:
     {{
         "hs_code": "HS Code range",
         "certifications": ["Cert 1", "Cert 2"],
         "target_countries": ["Country 1", "Country 2", "Country 3"],
         "buyer_types": "Wholesalers / Distributors / Retailers"
     }}
-    Output ONLY raw JSON string. Do NOT add explanation or markdown code fences.
+    Do not add extra text, commentary, or markdown. Return only the JSON object.
     """
     try:
-        raw_text, used_model = safe_groq_call(groq_client, model_name, prompt, temperature=0.1)
+        # Enforcing JSON mode directly via Groq API
+        completion = groq_client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            response_format={"type": "json_object"}
+        )
+        raw_text = completion.choices[0].message.content.strip()
         
-        # Strip DeepSeek <think> tags if present
+        # Clean <think> tags if any reasoning model is used
         raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
         
-        # Robust JSON Extraction using Regex
-        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if json_match:
-            clean_json_str = json_match.group(0)
-            return json.loads(clean_json_str)
-        else:
-            return json.loads(raw_text)
+        return json.loads(raw_text)
+        
     except Exception as e:
+        # Fallback to main 70B model if the selected small model fails
+        if model_name != "llama-3.3-70b-versatile":
+            try:
+                completion = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    response_format={"type": "json_object"}
+                )
+                return json.loads(completion.choices[0].message.content.strip())
+            except Exception as fallback_err:
+                st.error(f"Market Analysis Error: {fallback_err}")
+                return None
         st.error(f"Market Analysis Error: {e}")
         return None
 
