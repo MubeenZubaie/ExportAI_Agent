@@ -444,16 +444,18 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
                 st.dataframe(df[["source", "title", "email", "phone", "linkedin", "link"]], use_container_width=True)
                 
                 # Step 3: Pitch Generation
-                with st.spinner(f"⚡ Step 3/4: Generating B2B Pitches via AI Engine..."):
-                    for comp in found_companies[:3]:
-                        pitch_text = generate_company_pitch(product_input, comp, groq_client, selected_model)
-                        comp["generated_pitch"] = pitch_text
+with st.spinner(f"⚡ Step 3/4: Generating B2B Pitches via AI Engine..."):
+    for comp in found_companies[:3]:
+        pitch_text = generate_company_pitch(product_input, comp, groq_client, selected_model)
+        # Option A: Pitch text se pehli 'Subject:' wali line hamesha ke liye hatai di
+        clean_pitch = re.sub(r"^Subject:.*?\n", "", pitch_text, flags=re.MULTILINE).strip()
+        comp["generated_pitch"] = clean_pitch
                 
-                # SAFE SESSION STATE SETTERS (Prevents KeyError)
-                st.session_state['found_companies'] = found_companies
-                st.session_state['product_name'] = product_input
-                st.session_state['market_data'] = market_data if market_data else {}
-                st.session_state['tariff_data'] = tariff_data if tariff_data else {}
+         # SAFE SESSION STATE SETTERS (Prevents KeyError)
+        st.session_state['found_companies'] = found_companies
+        st.session_state['product_name'] = product_input
+        st.session_state['market_data'] = market_data if market_data else {}
+        st.session_state['tariff_data'] = tariff_data if tariff_data else {}
 
 # ==========================================
 # STEP 3: PITCH & DIRECT EMAIL SENDER UI
