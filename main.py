@@ -461,3 +461,8 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
         st.download_button(
             label="📄 Download Market Report (PDF)",
             data=pdf_bytes,
+            file_name=f"export_report_{prod_name.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+            type="secondary",
+            use_container_width=True
+        )
