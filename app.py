@@ -12,7 +12,7 @@ from groq import Groq
 from ddgs import DDGS
 from tavily import TavilyClient
 
-# PDF Generation Imports (STEP 1 ADDITION)
+# PDF Generation Imports
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -37,14 +37,22 @@ DEFAULT_PASS = os.getenv("SENDER_PASSWORD", "")
 st.set_page_config(page_title="Export AI Agent", page_icon="🚀", layout="wide")
 
 st.title("🚀 Global Export AI Agent (Enterprise Edition)")
-st.caption("Powered by Groq Llama-3.3, Tavily AI, DDGS, & Direct Email Automation")
+st.caption("Powered by Groq Llama-3.3, DeepSeek R1, Tavily AI, DDGS, & Direct Email Automation")
 
 # ---------------------------------------------
-# 2. SIDEBAR WITH AUTO-FILLED VALUES
+# 2. SIDEBAR WITH AUTO-FILLED VALUES & MULTI-LLM
 # ---------------------------------------------
 st.sidebar.header("🔑 API & Email Credentials")
 groq_key = st.sidebar.text_input("Groq API Key", value=DEFAULT_GROQ, type="password")
 tavily_key = st.sidebar.text_input("Tavily API Key", value=DEFAULT_TAVILY, type="password")
+
+st.sidebar.divider()
+st.sidebar.subheader("🤖 AI Model Settings (Multi-LLM)")
+selected_model = st.sidebar.selectbox(
+    "Select Intelligence Engine:",
+    ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"],
+    help="Choose Llama-3.3 for ultra-fast generation or DeepSeek R1 for advanced reasoning."
+)
 
 st.sidebar.divider()
 st.sidebar.subheader("📧 Sender Email Settings (Gmail SMTP)")
@@ -52,7 +60,7 @@ sender_email = st.sidebar.text_input("Your Email", value=DEFAULT_EMAIL)
 sender_password = st.sidebar.text_input("App Password", value=DEFAULT_PASS, type="password", help="Gmail App Password")
 
 # ==========================================
-# PDF GENERATOR FUNCTION (NEW ADDITION)
+# PDF GENERATOR FUNCTION
 # ==========================================
 def generate_pdf_report(product_name, market_data, companies):
     buffer = BytesIO()
@@ -68,7 +76,6 @@ def generate_pdf_report(product_name, market_data, companies):
         Spacer(1, 10)
     ]
     
-    # Market Feasibility Summary
     if market_data:
         story.append(Paragraph("<b>Market Feasibility Summary</b>", sub_title_style))
         hs = market_data.get('hs_code', 'N/A')
@@ -80,7 +87,6 @@ def generate_pdf_report(product_name, market_data, companies):
         story.append(Paragraph(summary_text, body_style))
         story.append(Spacer(1, 12))
     
-    # Buyer Leads Table
     if companies:
         story.append(Paragraph("<b>Scraped Global Buyer Leads & Contact Info</b>", sub_title_style))
         table_data = [["Source", "Company Title", "Extracted Email", "Extracted Phone"]]
@@ -111,7 +117,7 @@ def generate_pdf_report(product_name, market_data, companies):
     return buffer
 
 # ==========================================
-# SCRAPER & EMAIL EXTRACTOR (STEP 3)
+# SCRAPER & EMAIL EXTRACTOR
 # ==========================================
 def extract_contact_info(url):
     contact_data = {"extracted_email": "Not Found", "extracted_phone": "Not Found"}
@@ -120,14 +126,11 @@ def extract_contact_info(url):
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             text = response.text
-            # Regex for Emails
             emails = re.findall(r'[a-zA-Z0-9%._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-            # Filter non-image extensions
             emails = [e for e in emails if not e.endswith(('.png', '.jpg', '.jpeg', '.gif', '.svg'))]
             if emails:
                 contact_data["extracted_email"] = emails[0]
             
-            # Regex for Phone Numbers
             phones = re.findall(r'\+?\d{1,3}[-.\s]?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', text)
             if phones:
                 contact_data["extracted_phone"] = phones[0]
@@ -136,11 +139,10 @@ def extract_contact_info(url):
     return contact_data
 
 # ==========================================
-# DIRECT EMAIL SENDER (STEP 2)
+# DIRECT EMAIL SENDER
 # ==========================================
 def send_cold_email(smtp_email, smtp_password, recipient_email, subject, body):
     try:
-        # Password aur email clean karna
         clean_password = smtp_password.replace(" ", "").strip()
         clean_sender = smtp_email.strip()
         
@@ -150,7 +152,6 @@ def send_cold_email(smtp_email, smtp_password, recipient_email, subject, body):
         msg['Subject'] = subject.strip()
         msg.attach(MIMEText(body, 'plain'))
 
-        # Gmail SMTP Connection
         server = smtplib.SMTP('smtp.gmail.com', 587, timeout=15)
         server.starttls()
         server.login(clean_sender, clean_password)
@@ -161,9 +162,9 @@ def send_cold_email(smtp_email, smtp_password, recipient_email, subject, body):
         return False, str(e)
 
 # ==========================================
-# SEARCH & AI FUNCTIONS
+# SEARCH & AI FUNCTIONS (UPDATED FOR DYNAMIC MODEL)
 # ==========================================
-def analyze_market(product_name, groq_client):
+def analyze_market(product_name, groq_client, model_name):
     prompt = f"""
     Aap ek Pakistani International Trade Expert hain. Product: {product_name}
     Target export countries ki report dein strictly JSON format mein:
@@ -177,11 +178,14 @@ def analyze_market(product_name, groq_client):
     """
     try:
         completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
         )
-        raw_text = completion.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
+        raw_text = completion.choices[0].message.content.strip()
+        # Clean potential reasoning tags if deepseek is used
+        raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
         return json.loads(raw_text)
     except Exception as e:
         st.error(f"Market Analysis Error: {e}")
@@ -228,7 +232,7 @@ def search_parallel(product_name, country, tavily_client):
         all_companies.extend(f_ddgs.result())
     return all_companies
 
-def generate_company_pitch(product_name, company, groq_client):
+def generate_company_pitch(product_name, company, groq_client, model_name):
     prompt = f"""
     You are an expert B2B Export Sales Specialist representing a manufacturer from Pakistan.
     Product: {product_name}
@@ -244,11 +248,14 @@ def generate_company_pitch(product_name, company, groq_client):
     """
     try:
         completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
         )
-        return completion.choices[0].message.content
+        raw_resp = completion.choices[0].message.content
+        # Remove reasoning tags from DeepSeek R1 if present
+        clean_resp = re.sub(r'<think>.*?</think>', '', raw_resp, flags=re.DOTALL).strip()
+        return clean_resp
     except Exception as e:
         return f"Error generating pitch: {e}"
 
@@ -267,8 +274,8 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
         tavily_client = TavilyClient(api_key=tavily_key)
         
         # Step 1: Feasibility Analysis
-        with st.spinner("🧠 1/4: Market Feasibility Analysis..."):
-            market_data = analyze_market(product_input, groq_client)
+        with st.spinner(f"🧠 1/4: Feasibility Analysis ({selected_model})..."):
+            market_data = analyze_market(product_input, groq_client, selected_model)
             
         if market_data:
             st.subheader("📌 Export Feasibility Report")
@@ -283,7 +290,6 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
             with st.spinner(f"🔍 2/4: Buyers search & Contact details extract ho rahe hain ({target_country})..."):
                 found_companies = search_parallel(product_input, target_country, tavily_client)
                 
-                # Scraping Web Pages for Emails & Phone
                 for comp in found_companies:
                     contact = extract_contact_info(comp['link'])
                     comp['email'] = contact['extracted_email']
@@ -295,18 +301,17 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
                 st.dataframe(df[["source", "title", "email", "phone", "link"]], use_container_width=True)
                 
                 # Step 3: Pitch Generation
-                with st.spinner("⚡ 3/4: High-Converting Sales Pitches generate ho rahi hain..."):
+                with st.spinner(f"⚡ 3/4: Generating Pitches via {selected_model}..."):
                     for comp in found_companies[:3]:
-                        pitch_text = generate_company_pitch(product_input, comp, groq_client)
+                        pitch_text = generate_company_pitch(product_input, comp, groq_client, selected_model)
                         comp["generated_pitch"] = pitch_text
                 
-                # Save results to session state so UI inputs stay active
                 st.session_state['found_companies'] = found_companies
                 st.session_state['product_name'] = product_input
                 st.session_state['market_data'] = market_data
 
 # ==========================================
-# STEP 3: PITCH & DIRECT EMAIL SENDER UI (WITH BULK SENDING)
+# STEP 3: PITCH & DIRECT EMAIL SENDER UI
 # ==========================================
 if 'found_companies' in st.session_state and st.session_state['found_companies']:
     companies = st.session_state['found_companies'][:3]
@@ -315,9 +320,6 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
     
     st.divider()
     
-    # ---------------------------------------------------------
-    # MASTER BULK EMAIL BUTTON
-    # ---------------------------------------------------------
     st.subheader("🔥 Bulk Email Outreach")
     st.info("💡 Yeh feature tamam scraped companies ko baari-baari 3 second ke interval se email bhejega.")
     
@@ -337,7 +339,6 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
                     
                     pitch_content = comp.get("generated_pitch", "")
                     
-                    # Extract Subject
                     subj = f"Export Opportunity: High Quality {prod_name} from Pakistan"
                     if "Subject:" in pitch_content:
                         for line in pitch_content.split("\n"):
@@ -345,15 +346,12 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
                                 subj = line.replace("Subject:", "").strip()
                                 break
                     
-                    # Clean body
                     clean_body = re.sub(r"^Subject:.*?\n", "", pitch_content, flags=re.MULTILINE).strip()
                     
-                    # Send Email
                     ok, err = send_cold_email(sender_email, sender_password, rec_email, subj, clean_body)
                     if ok:
                         success_count += 1
                     
-                    # Delay to avoid Gmail rate limit
                     time.sleep(3)
                 
                 progress_bar.progress((idx + 1) / len(companies))
@@ -364,9 +362,6 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
 
     st.divider()
     
-    # ---------------------------------------------------------
-    # INDIVIDUAL TABS FOR SINGLE EMAIL PREVIEW & SENDING
-    # ---------------------------------------------------------
     st.subheader("✉️ Individual Pitch Preview & Outreach")
     tabs = st.tabs([f"Company {i+1}" for i in range(len(companies))])
     
@@ -378,7 +373,6 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
             
             pitch_content = comp.get("generated_pitch", "")
             
-            # Extract Subject Line
             subject_default = f"Export Opportunity: High Quality {prod_name} from Pakistan"
             if "Subject:" in pitch_content:
                 for line in pitch_content.split("\n"):
@@ -413,7 +407,7 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
                     else:
                         st.error(f"❌ Email Failed: {msg}")
 
-    # Step 4: Export Buttons (CSV & PDF)
+    # Export Buttons (CSV & PDF)
     export_df = pd.DataFrame(st.session_state['found_companies'])
     csv_data = export_df.to_csv(index=False).encode('utf-8')
     pdf_bytes = generate_pdf_report(prod_name, mkt_data, st.session_state['found_companies'])
