@@ -86,16 +86,15 @@ def get_hunter_emails(domain, api_key):
 # ==========================================
 def get_comtrade_summary(hs_code):
     try:
-        # Public UN Comtrade API Endpoint for Trade Data
         clean_hs = re.sub(r'\D', '', str(hs_code))[:4]
         if not clean_hs:
-            clean_hs = "0806" # Default sample HS code
+            clean_hs = "0806"
         url = f"https://comtradeapi.un.org/public/v1/preview/C/A/HS?period=2022&reporterCode=586&cmdCode={clean_hs}"
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
             data = res.json()
             if data.get('data'):
-                return f"UN Comtrade records found: Total export volume tracked across global corridors."
+                return "UN Comtrade records found: Total export volume tracked across global corridors."
     except Exception:
         pass
     return "Official UN Comtrade shipment analytics active."
@@ -177,7 +176,6 @@ def extract_contact_info(url, hunter_key=""):
         domain_match = re.search(r'https?://(?:www\.)?([^/]+)', url)
         domain = domain_match.group(1) if domain_match else ""
 
-        # Hunter.io API direct enrichment
         if hunter_key and domain:
             h_emails = get_hunter_emails(domain, hunter_key)
             if h_emails:
@@ -410,7 +408,6 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
             
             target_country = market_data.get('target_countries', ['United States'])[0]
             
-            # Comtrade Info Check
             comtrade_status = get_comtrade_summary(market_data.get('hs_code', ''))
             st.caption(f"🌐 **UN Comtrade Live Engine:** {comtrade_status}")
             
@@ -452,18 +449,20 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
                         pitch_text = generate_company_pitch(product_input, comp, groq_client, selected_model)
                         comp["generated_pitch"] = pitch_text
                 
+                # SAFE SESSION STATE SETTERS (Prevents KeyError)
                 st.session_state['found_companies'] = found_companies
                 st.session_state['product_name'] = product_input
-                st.session_state['market_data'] = market_data
-                st.session_state['tariff_data']
-                # ==========================================
+                st.session_state['market_data'] = market_data if market_data else {}
+                st.session_state['tariff_data'] = tariff_data if tariff_data else {}
+
+# ==========================================
 # STEP 3: PITCH & DIRECT EMAIL SENDER UI
 # ==========================================
-if 'found_companies' in st.session_state and st.session_state['found_companies']:
+if 'found_companies' in st.session_state and st.session_state.get('found_companies'):
     companies = st.session_state['found_companies'][:3]
     prod_name = st.session_state.get('product_name', 'Export Item')
-    mkt_data = st.session_state.get('market_data', None)
-    trf_data = st.session_state.get('tariff_data', None)
+    mkt_data = st.session_state.get('market_data', {})
+    trf_data = st.session_state.get('tariff_data', {})
     
     st.divider()
     
