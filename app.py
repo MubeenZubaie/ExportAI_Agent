@@ -12,6 +12,13 @@ from groq import Groq
 from ddgs import DDGS
 from tavily import TavilyClient
 
+# PDF Generation Imports (STEP 1 ADDITION)
+from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # ---------------------------------------------
 # 1. LOAD ENV VARIABLES FROM .ENV FILE
 # ---------------------------------------------
@@ -43,6 +50,65 @@ st.sidebar.divider()
 st.sidebar.subheader("📧 Sender Email Settings (Gmail SMTP)")
 sender_email = st.sidebar.text_input("Your Email", value=DEFAULT_EMAIL)
 sender_password = st.sidebar.text_input("App Password", value=DEFAULT_PASS, type="password", help="Gmail App Password")
+
+# ==========================================
+# PDF GENERATOR FUNCTION (NEW ADDITION)
+# ==========================================
+def generate_pdf_report(product_name, market_data, companies):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, leading=20, textColor=colors.HexColor('#1E3A8A'), spaceAfter=10)
+    sub_title_style = ParagraphStyle('SubTitleStyle', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#1F2937'), spaceAfter=8)
+    body_style = ParagraphStyle('BodyStyle', parent=styles['Normal'], fontSize=9, leading=12, spaceAfter=6)
+    
+    story = [
+        Paragraph(f"Export Market Intelligence Report: {product_name.upper()}", title_style),
+        Spacer(1, 10)
+    ]
+    
+    # Market Feasibility Summary
+    if market_data:
+        story.append(Paragraph("<b>Market Feasibility Summary</b>", sub_title_style))
+        hs = market_data.get('hs_code', 'N/A')
+        countries = ", ".join(market_data.get('target_countries', []))
+        certs = ", ".join(market_data.get('certifications', []))
+        buyers = market_data.get('buyer_types', 'N/A')
+        
+        summary_text = f"<b>HS Code:</b> {hs}<br/><b>Target Countries:</b> {countries}<br/><b>Required Certifications:</b> {certs}<br/><b>Target Buyer Types:</b> {buyers}"
+        story.append(Paragraph(summary_text, body_style))
+        story.append(Spacer(1, 12))
+    
+    # Buyer Leads Table
+    if companies:
+        story.append(Paragraph("<b>Scraped Global Buyer Leads & Contact Info</b>", sub_title_style))
+        table_data = [["Source", "Company Title", "Extracted Email", "Extracted Phone"]]
+        for comp in companies:
+            title_clean = Paragraph(comp.get('title', '')[:40], body_style)
+            table_data.append([
+                comp.get('source', ''),
+                title_clean,
+                comp.get('email', 'Not Found'),
+                comp.get('phone', 'Not Found')
+            ])
+            
+        t = Table(table_data, colWidths=[80, 200, 140, 110])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 9),
+            ('BOTTOMPADDING', (0,0), (-1,0), 6),
+            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#F9FAFB')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E5E7EB')),
+        ]))
+        story.append(t)
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # ==========================================
 # SCRAPER & EMAIL EXTRACTOR (STEP 3)
@@ -237,6 +303,7 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
                 # Save results to session state so UI inputs stay active
                 st.session_state['found_companies'] = found_companies
                 st.session_state['product_name'] = product_input
+                st.session_state['market_data'] = market_data
 
 # ==========================================
 # STEP 3: PITCH & DIRECT EMAIL SENDER UI (WITH BULK SENDING)
@@ -244,6 +311,7 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
 if 'found_companies' in st.session_state and st.session_state['found_companies']:
     companies = st.session_state['found_companies'][:3]
     prod_name = st.session_state.get('product_name', 'Export Item')
+    mkt_data = st.session_state.get('market_data', None)
     
     st.divider()
     
@@ -345,14 +413,30 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
                     else:
                         st.error(f"❌ Email Failed: {msg}")
 
-    # Step 4: CSV Export Button
+    # Step 4: Export Buttons (CSV & PDF)
     export_df = pd.DataFrame(st.session_state['found_companies'])
     csv_data = export_df.to_csv(index=False).encode('utf-8')
+    pdf_bytes = generate_pdf_report(prod_name, mkt_data, st.session_state['found_companies'])
+    
     st.divider()
-    st.download_button(
-        label="📥 Download Complete Report & Scraped Leads (CSV)",
-        data=csv_data,
-        file_name=f"export_leads_{prod_name.replace(' ', '_')}.csv",
-        mime="text/csv",
-        type="primary"
-    )
+    col_csv, col_pdf = st.columns(2)
+    
+    with col_csv:
+        st.download_button(
+            label="📥 Download Scraped Leads (CSV)",
+            data=csv_data,
+            file_name=f"export_leads_{prod_name.replace(' ', '_')}.csv",
+            mime="text/csv",
+            type="primary",
+            use_container_width=True
+        )
+        
+    with col_pdf:
+        st.download_button(
+            label="📄 Download Market Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"export_report_{prod_name.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+            type="secondary",
+            use_container_width=True
+        )
