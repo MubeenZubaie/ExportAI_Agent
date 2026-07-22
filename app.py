@@ -4,10 +4,14 @@ import json
 import re
 import requests
 import smtplib
+import time
+import concurrent.futures
+import os
+from dotenv import load_dotenv
+
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from bs4 import BeautifulSoup
-import concurrent.futures
 from groq import Groq
 from ddgs import DDGS
 from tavily import TavilyClient
@@ -20,12 +24,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # ---------------------------------------------
-# 1. LOAD ENV VARIABLES FROM .ENV FILE
+# 1. LOAD ENV VARIABLES
 # ---------------------------------------------
-import os
-from dotenv import load_dotenv
-
-# Force load .env file
 load_dotenv()
 
 DEFAULT_GROQ = os.getenv("GROQ_API_KEY", "")
@@ -37,10 +37,10 @@ DEFAULT_PASS = os.getenv("SENDER_PASSWORD", "")
 st.set_page_config(page_title="Export AI Agent", page_icon="🚀", layout="wide")
 
 st.title("🚀 Global Export AI Agent (Enterprise Edition)")
-st.caption("Powered by Groq Llama-3.3, DeepSeek R1, Tavily AI, DDGS, & Direct Email Automation")
+st.caption("Powered by Smart Fallback Multi-LLM Routing (DeepSeek R1 + Llama-3.3)")
 
 # ---------------------------------------------
-# 2. SIDEBAR WITH AUTO-FILLED VALUES & MULTI-LLM
+# 2. SIDEBAR WITH SMART MODEL SELECTION
 # ---------------------------------------------
 st.sidebar.header("🔑 API & Email Credentials")
 groq_key = st.sidebar.text_input("Groq API Key", value=DEFAULT_GROQ, type="password")
@@ -49,19 +49,46 @@ tavily_key = st.sidebar.text_input("Tavily API Key", value=DEFAULT_TAVILY, type=
 st.sidebar.divider()
 st.sidebar.subheader("🤖 AI Model Settings (Multi-LLM)")
 selected_model = st.sidebar.selectbox(
-    "Select Intelligence Engine:",
+    "Select Preferred Intelligence Engine:",
     [
-        "llama-3.3-70b-versatile", 
-        "deepseek-r1-distill-qwen-32b",
+        "llama-3.3-70b-versatile",
+        "deepseek-r1-distill-llama-70b",
         "llama-3.1-8b-instant"
     ],
-    help="Choose Llama-3.3 for ultra-fast generation or DeepSeek R1 Qwen for advanced reasoning."
+    help="If selected model fails, system will auto-fallback to Llama-3.3 seamlessly."
 )
 
 st.sidebar.divider()
 st.sidebar.subheader("📧 Sender Email Settings (Gmail SMTP)")
 sender_email = st.sidebar.text_input("Your Email", value=DEFAULT_EMAIL)
 sender_password = st.sidebar.text_input("App Password", value=DEFAULT_PASS, type="password", help="Gmail App Password")
+
+# ==========================================
+# SMART LLM CALLER WITH AUTO-FALLBACK
+# ==========================================
+def safe_groq_call(groq_client, primary_model, prompt, temperature=0.2):
+    """
+    Tries the primary model. If decommissioned or errors out,
+    automatically falls back to llama-3.3-70b-versatile.
+    """
+    models_to_try = [primary_model]
+    if primary_model != "llama-3.3-70b-versatile":
+        models_to_try.append("llama-3.3-70b-versatile")
+        
+    last_exception = None
+    for model in models_to_try:
+        try:
+            completion = groq_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+            )
+            return completion.choices[0].message.content, model
+        except Exception as e:
+            last_exception = e
+            continue
+            
+    raise last_exception
 
 # ==========================================
 # PDF GENERATOR FUNCTION
@@ -92,10 +119,10 @@ def generate_pdf_report(product_name, market_data, companies):
         story.append(Spacer(1, 12))
     
     if companies:
-        story.append(Paragraph("<b>Scraped Global Buyer Leads & Contact Info</b>", sub_title_style))
+        story.append(Paragraph("<b>Verified Buyer Leads & Contact Details</b>", sub_title_style))
         table_data = [["Source", "Company Title", "Extracted Email", "Extracted Phone"]]
         for comp in companies:
-            title_clean = Paragraph(comp.get('title', '')[:40], body_style)
+            title_clean = Paragraph(str(comp.get('title', ''))[:40], body_style)
             table_data.append([
                 comp.get('source', ''),
                 title_clean,
@@ -121,10 +148,10 @@ def generate_pdf_report(product_name, market_data, companies):
     return buffer
 
 # ==========================================
-# SCRAPER & EMAIL EXTRACTOR
+# ADVANCED CONTACT EXTRACTOR
 # ==========================================
 def extract_contact_info(url):
-    contact_data = {"extracted_email": "Not Found", "extracted_phone": "Not Found"}
+    contact_data = {"extracted_email": "Not Found", "extracted_phone": "Not Found", "linkedin_profile": "Not Found"}
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(url, headers=headers, timeout=5)
@@ -138,6 +165,10 @@ def extract_contact_info(url):
             phones = re.findall(r'\+?\d{1,3}[-.\s]?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}', text)
             if phones:
                 contact_data["extracted_phone"] = phones[0]
+                
+            linkedin = re.findall(r'https?://[a-zA-Z0-9.-]*linkedin\.com/(?:company|in)/[a-zA-Z0-9_-]+', text)
+            if linkedin:
+                contact_data["linkedin_profile"] = linkedin[0]
     except Exception:
         pass
     return contact_data
@@ -166,7 +197,7 @@ def send_cold_email(smtp_email, smtp_password, recipient_email, subject, body):
         return False, str(e)
 
 # ==========================================
-# SEARCH & AI FUNCTIONS (UPDATED FOR DYNAMIC MODEL)
+# SEARCH & ROBUST AI ANALYSIS
 # ==========================================
 def analyze_market(product_name, groq_client, model_name):
     prompt = f"""
@@ -178,19 +209,21 @@ def analyze_market(product_name, groq_client, model_name):
         "target_countries": ["Country 1", "Country 2", "Country 3"],
         "buyer_types": "Wholesalers / Distributors / Retailers"
     }}
-    Only valid JSON format, no extra text or markdown code blocks.
+    Output ONLY raw JSON string. Do NOT add explanation or markdown code fences.
     """
     try:
-        completion = groq_client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        raw_text = completion.choices[0].message.content.strip()
-        # Clean potential reasoning tags if deepseek is used
+        raw_text, used_model = safe_groq_call(groq_client, model_name, prompt, temperature=0.1)
+        
+        # Strip DeepSeek <think> tags if present
         raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
-        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw_text)
+        
+        # Robust JSON Extraction using Regex
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if json_match:
+            clean_json_str = json_match.group(0)
+            return json.loads(clean_json_str)
+        else:
+            return json.loads(raw_text)
     except Exception as e:
         st.error(f"Market Analysis Error: {e}")
         return None
@@ -201,7 +234,7 @@ def run_tavily(query, tavily_client):
         res = tavily_client.search(query=query, max_results=3)
         for item in res.get('results', []):
             results.append({
-                "source": "Tavily AI",
+                "source": "Tavily Lead Engine",
                 "title": item.get('title'),
                 "link": item.get('url'),
                 "snippet": item.get('content')
@@ -217,7 +250,7 @@ def run_ddgs(query):
         res = ddgs.text(query, max_results=3)
         for r in res:
             results.append({
-                "source": "DDGS Engine",
+                "source": "DDGS Lead Engine",
                 "title": r.get('title'),
                 "link": r.get('href'),
                 "snippet": r.get('body')
@@ -227,7 +260,7 @@ def run_ddgs(query):
     return results
 
 def search_parallel(product_name, country, tavily_client):
-    query = f"top {product_name} importers distributors wholesalers in {country}"
+    query = f"top {product_name} importers distributors purchase manager email contact in {country}"
     all_companies = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         f_tavily = executor.submit(run_tavily, query, tavily_client)
@@ -243,21 +276,14 @@ def generate_company_pitch(product_name, company, groq_client, model_name):
     Target Company Title: {company['title']}
     Company Details: {company['snippet']}
     
-    Write a highly professional B2B Cold Email targeting the Sourcing/Purchase Manager of this company.
+    Write a highly professional B2B Cold Email targeting the Sourcing/Purchase Manager.
     
     STRICT RULES:
-    1. The ENTIRE output MUST be strictly in professional, formal English language.
-    2. Do NOT use any Hindi, Urdu, Roman Hindi, or Devanagari script.
-    3. Output must start with "Subject: [Your Subject Line]" on the first line, followed by the Email Body.
+    1. Entire output MUST be in professional English.
+    2. Output must start with "Subject: [Your Subject Line]" on the first line, followed by Email Body.
     """
     try:
-        completion = groq_client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-        )
-        raw_resp = completion.choices[0].message.content
-        # Remove reasoning tags from DeepSeek R1 if present
+        raw_resp, _ = safe_groq_call(groq_client, model_name, prompt, temperature=0.5)
         clean_resp = re.sub(r'<think>.*?</think>', '', raw_resp, flags=re.DOTALL).strip()
         return clean_resp
     except Exception as e:
@@ -278,7 +304,7 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
         tavily_client = TavilyClient(api_key=tavily_key)
         
         # Step 1: Feasibility Analysis
-        with st.spinner(f"🧠 1/4: Feasibility Analysis ({selected_model})..."):
+        with st.spinner(f"🧠 Step 1/4: Feasibility Analysis executing ({selected_model})..."):
             market_data = analyze_market(product_input, groq_client, selected_model)
             
         if market_data:
@@ -291,21 +317,22 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
             target_country = market_data.get('target_countries', ['United States'])[0]
             
             # Step 2: Live Buyers Parallel Search & Scraping
-            with st.spinner(f"🔍 2/4: Buyers search & Contact details extract ho rahe hain ({target_country})..."):
+            with st.spinner(f"🔍 Step 2/4: Live Buyers & Contact Intelligence ({target_country})..."):
                 found_companies = search_parallel(product_input, target_country, tavily_client)
                 
                 for comp in found_companies:
                     contact = extract_contact_info(comp['link'])
                     comp['email'] = contact['extracted_email']
                     comp['phone'] = contact['extracted_phone']
+                    comp['linkedin'] = contact['linkedin_profile']
                 
             if found_companies:
-                st.subheader(f"🏢 Live Buyer Profiles & Extracted Contacts ({target_country.upper()})")
+                st.subheader(f"🏢 Verified Buyer Leads & Contact Intelligence ({target_country.upper()})")
                 df = pd.DataFrame(found_companies)
-                st.dataframe(df[["source", "title", "email", "phone", "link"]], use_container_width=True)
+                st.dataframe(df[["source", "title", "email", "phone", "linkedin", "link"]], use_container_width=True)
                 
                 # Step 3: Pitch Generation
-                with st.spinner(f"⚡ 3/4: Generating Pitches via {selected_model}..."):
+                with st.spinner(f"⚡ Step 3/4: Generating B2B Pitches via AI Engine..."):
                     for comp in found_companies[:3]:
                         pitch_text = generate_company_pitch(product_input, comp, groq_client, selected_model)
                         comp["generated_pitch"] = pitch_text
@@ -335,7 +362,6 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
             status_text = st.empty()
             success_count = 0
             
-            import time
             for idx, comp in enumerate(companies):
                 rec_email = comp.get('email')
                 if rec_email and rec_email != "Not Found":
@@ -374,6 +400,8 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
         with tab:
             st.markdown(f"**Target Company:** [{comp['title']}]({comp['link']})")
             st.markdown(f"**Extracted Email:** `{comp['email']}`")
+            if comp.get('linkedin') != "Not Found":
+                st.markdown(f"**LinkedIn Profile:** [View Profile]({comp['linkedin']})")
             
             pitch_content = comp.get("generated_pitch", "")
             
@@ -433,8 +461,3 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
         st.download_button(
             label="📄 Download Market Report (PDF)",
             data=pdf_bytes,
-            file_name=f"export_report_{prod_name.replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            type="secondary",
-            use_container_width=True
-        )
