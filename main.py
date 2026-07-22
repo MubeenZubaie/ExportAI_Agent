@@ -50,8 +50,13 @@ st.sidebar.divider()
 st.sidebar.subheader("🤖 AI Model Settings (Multi-LLM)")
 selected_model = st.sidebar.selectbox(
     "Select Intelligence Engine:",
-    ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"],
-    help="Choose Llama-3.3 for ultra-fast generation or DeepSeek R1 for advanced reasoning."
+    [
+        "llama-3.3-70b-versatile", 
+        "deepseek-r1-distill-qwen-32b",
+        "llama-3.1-8b-instant"
+    ],
+    help="Choose Llama-3.3 for ultra-fast generation or DeepSeek R1 Qwen for advanced reasoning."
+)
 )
 
 st.sidebar.divider()
