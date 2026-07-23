@@ -588,3 +588,40 @@ if 'found_companies' in st.session_state and st.session_state['found_companies']
                         st.success(f"✅ {msg}")
                     else:
                         st.error(f"❌ Sending Failed: {msg}")
+
+    # ==========================================
+    # NEW FEATURE 1: WHATSAPP DIRECT CHAT GENERATOR
+    # ==========================================
+    st.markdown("---")
+    st.markdown("### 📲 Direct WhatsApp Outreach")
+    st.caption("Select a buyer lead to generate an instant WhatsApp chat link with a pre-filled pitch.")
+
+    wa_col1, wa_col2 = st.columns(2)
+
+    with wa_col1:
+        selected_wa_comp = st.selectbox(
+            "Select Buyer Lead for WhatsApp:",
+            [c['title'] for c in st.session_state.get('found_companies', [])[:5]],
+            key="wa_buyer_select"
+        )
+        
+        selected_comp_data = next((c for c in st.session_state.get('found_companies', []) if c['title'] == selected_wa_comp), None)
+        
+        wa_phone = ""
+        if selected_comp_data:
+            raw_phone = selected_comp_data.get('phone', '')
+            wa_phone = re.sub(r'\D', '', raw_phone)
+
+        target_phone = st.text_input("Buyer WhatsApp Phone Number (With Country Code):", value=wa_phone, placeholder="e.g. 14155552671")
+
+    with wa_col2:
+        prod_name = st.session_state.get('product_name', 'our products')
+        default_msg = f"Hello! I am reaching out from Pakistan regarding high-quality export supply of {prod_name}. We noticed your sourcing needs and would love to share our latest catalog and competitive FOB prices. Are you available for a quick chat?"
+        wa_message = st.text_area("WhatsApp Message Preview:", value=default_msg, height=110)
+
+    if target_phone.strip():
+        encoded_msg = requests.utils.quote(wa_message)
+        wa_url = f"https://wa.me/{target_phone}?text={encoded_msg}"
+        st.markdown(f'<a href="{wa_url}" target="_blank" style="text-decoration:none;"><button style="background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer;">💬 Open WhatsApp Chat Now</button></a>', unsafe_allow_html=True)
+    else:
+        st.info("💡 Enter a valid phone number above to generate the WhatsApp link.")
