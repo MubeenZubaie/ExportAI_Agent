@@ -7,6 +7,7 @@ import smtplib
 import time
 import concurrent.futures
 import os
+from datetime import date
 from dotenv import load_dotenv
 
 from email.mime.text import MIMEText
@@ -24,7 +25,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # ---------------------------------------------
-# 1. LOAD ENV VARIABLES
+# 1. LOAD ENV VARIABLES & CONFIG
 # ---------------------------------------------
 load_dotenv()
 
@@ -34,15 +35,93 @@ DEFAULT_HUNTER = os.getenv("HUNTER_API_KEY", "")
 DEFAULT_EMAIL = os.getenv("SENDER_EMAIL", "")
 DEFAULT_PASS = os.getenv("SENDER_PASSWORD", "")
 
-# Page Config
+# Page Config (Must be the first Streamlit command)
 st.set_page_config(page_title="Export AI Agent", page_icon="🚀", layout="wide")
 
+# ==========================================
+# AUTHENTICATION & SEARCH LIMIT SYSTEM
+# ==========================================
+USERS = {
+    "ali_admin": {"password": "Mubeen89Rajput@King", "role": "admin", "daily_limit": 99999},
+    "free_user1": {"password": "user123", "role": "free", "daily_limit": 1}
+}
+
+def check_and_update_limit(username):
+    user_info = USERS.get(username, {})
+    if user_info.get("role") == "admin":
+        return True, "Unlimited Access (Admin)"
+    
+    today = str(date.today())
+    if 'user_searches' not in st.session_state:
+        st.session_state['user_searches'] = {}
+        
+    user_data = st.session_state['user_searches'].get(username, {"date": today, "count": 0})
+    
+    if user_data["date"] != today:
+        user_data = {"date": today, "count": 0}
+        
+    limit = user_info.get("daily_limit", 5)
+    
+    if user_data["count"] >= limit:
+        return False, f"Daily limit reached ({user_data['count']}/{limit}). Upgrade to Premium!"
+    
+    return True, f"Remaining Searches Today: {limit - user_data['count']}/{limit}"
+
+def increment_user_search(username):
+    today = str(date.today())
+    if 'user_searches' not in st.session_state:
+        st.session_state['user_searches'] = {}
+        
+    user_data = st.session_state['user_searches'].get(username, {"date": today, "count": 0})
+    user_data["count"] += 1
+    st.session_state['user_searches'][username] = user_data
+
+# Initialize Login State
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+    st.session_state['current_user'] = None
+
+# Show Login Screen if not logged in
+if not st.session_state['logged_in']:
+    st.title("🔐 Global Export AI Agent - Login")
+    st.caption("Enter your credentials to access enterprise trade intelligence.")
+    
+    col_l1, col_l2, col_l3 = st.columns([1,2,1])
+    with col_l2:
+        with st.form("login_form"):
+            username_input = st.text_input("Username")
+            password_input = st.text_input("Password", type="password")
+            submit_login = st.form_submit_button("🔓 Login to Dashboard", use_container_width=True)
+            
+            if submit_login:
+                if username_input in USERS and USERS[username_input]["password"] == password_input:
+                    st.session_state['logged_in'] = True
+                    st.session_state['current_user'] = username_input
+                    st.success("Login Successful!")
+                    st.rerun()
+                else:
+                    st.error("Invalid Username or Password!")
+    st.stop() # Stops execution of rest of app until login
+
+# ---------------------------------------------
+# MAIN DASHBOARD (FOR LOGGED-IN USERS)
+# ---------------------------------------------
 st.title("🚀 Global Export AI Agent (Enterprise Edition)")
 st.caption("Powered by Global Buyer & Trade Database Integration (Comtrade + Hunter + Panjiva Engine)")
 
 # ---------------------------------------------
-# 2. SIDEBAR CREDENTIALS & API KEYS
+# 2. SIDEBAR CREDENTIALS & USER PROFILE
 # ---------------------------------------------
+st.sidebar.markdown(f"👤 **Logged in as:** `{st.session_state['current_user']}`")
+can_search, status_msg = check_and_update_limit(st.session_state['current_user'])
+st.sidebar.info(f"📊 **Usage:** {status_msg}")
+
+if st.sidebar.button("🔒 Logout"):
+    st.session_state['logged_in'] = False
+    st.session_state['current_user'] = None
+    st.rerun()
+
+st.sidebar.divider()
 st.sidebar.header("🔑 API & Trade Database Credentials")
 groq_key = st.sidebar.text_input("Groq API Key", value=DEFAULT_GROQ, type="password")
 tavily_key = st.sidebar.text_input("Tavily API Key", value=DEFAULT_TAVILY, type="password")
@@ -387,11 +466,17 @@ def generate_company_pitch(product_name, company, groq_client, model_name):
 product_input = st.text_input("📦 Enter Pakistani Export Product:", placeholder="e.g. Surgical Instruments, Leather Jackets, Rice")
 
 if st.button("🚀 Run AI Export Search Agent", type="primary"):
-    if not groq_key or not tavily_key:
+    can_search, limit_msg = check_and_update_limit(st.session_state['current_user'])
+    
+    if not can_search:
+        st.error(f"🚫 {limit_msg}")
+    elif not groq_key or not tavily_key:
         st.warning("⚠️ Sidebar mein Groq aur Tavily Keys enter karein!")
     elif not product_input.strip():
         st.warning("⚠️ Product name enter karein!")
     else:
+        increment_user_search(st.session_state['current_user'])
+        
         groq_client = Groq(api_key=groq_key)
         tavily_client = TavilyClient(api_key=tavily_key)
         
@@ -443,7 +528,7 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
                 df = pd.DataFrame(found_companies)
                 st.dataframe(df[["source", "title", "email", "phone", "linkedin", "link"]], use_container_width=True)
                 
-                # Step 3: Pitch Generation (Yeh 'if' ke andar hona chahiye)
+                # Step 3: Pitch Generation
                 with st.spinner(f"⚡ Step 3/4: Generating B2B Pitches via AI Engine..."):
                     for comp in found_companies[:3]:
                         pitch_text = generate_company_pitch(product_input, comp, groq_client, selected_model)
@@ -456,129 +541,50 @@ if st.button("🚀 Run AI Export Search Agent", type="primary"):
                 st.session_state['market_data'] = market_data if market_data else {}
                 st.session_state['tariff_data'] = tariff_data if tariff_data else {}
 
-# ==========================================
-# STEP 3: PITCH & DIRECT EMAIL SENDER UI
-# ==========================================
-if 'found_companies' in st.session_state and st.session_state.get('found_companies'):
-    companies = st.session_state['found_companies'][:3]
-    prod_name = st.session_state.get('product_name', 'Export Item')
-    mkt_data = st.session_state.get('market_data', {})
-    trf_data = st.session_state.get('tariff_data', {})
+# PDF DOWNLOAD & EMAIL OUTREACH UI
+if 'found_companies' in st.session_state and st.session_state['found_companies']:
+    st.markdown("---")
+    st.subheader("📥 Export Intelligence Report & Direct B2B Pitching")
     
-    st.divider()
+    col_pdf, col_pitch = st.columns(2)
     
-    st.subheader("🔥 Bulk Email Outreach")
-    st.info("💡 Yeh feature tamam scraped companies ko baari-baari 3 second ke interval se email bhejega.")
-    
-    if st.button("🚀 Send Cold Emails to ALL Companies at Once", type="primary"):
-        if not sender_email or not sender_password:
-            st.error("❌ Pehle Sidebar mein Sender Email aur Gmail App Password confirm karein!")
-        else:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            success_count = 0
-            
-            for idx, comp in enumerate(companies):
-                rec_email = comp.get('email')
-                if rec_email and rec_email != "Not Found":
-                    status_text.text(f"Sending email {idx+1}/{len(companies)} to {rec_email}...")
-                    
-                    pitch_content = comp.get("generated_pitch", "")
-                    
-                    subj = f"Export Opportunity: High Quality {prod_name} from Pakistan"
-                    if "Subject:" in pitch_content:
-                        for line in pitch_content.split("\n"):
-                            if line.startswith("Subject:"):
-                                subj = line.replace("Subject:", "").strip()
-                                break
-                    
-                    clean_body = re.sub(r"^Subject:.*?\n", "", pitch_content, flags=re.MULTILINE).strip()
-                    
-                    ok, err = send_cold_email(sender_email, sender_password, rec_email, subj, clean_body)
-                    if ok:
-                        success_count += 1
-                    
-                    time.sleep(3)
-                
-                progress_bar.progress((idx + 1) / len(companies))
-            
-            status_text.text("Bulk Sending Completed!")
-            st.success(f"🎉 Process Complete! Successfully sent {success_count} out of {len(companies)} emails.")
-            st.balloons()
-
-    st.divider()
-    
-    st.subheader("✉️ Individual Pitch Preview & Outreach")
-    tabs = st.tabs([f"Company {i+1}" for i in range(len(companies))])
-    
-    for idx, tab in enumerate(tabs):
-        comp = companies[idx]
-        with tab:
-            st.markdown(f"**Target Company:** [{comp['title']}]({comp['link']})")
-            st.markdown(f"**Extracted Email:** `{comp['email']}`")
-            if comp.get('linkedin') != "Not Found":
-                st.markdown(f"**LinkedIn Profile:** [View Profile]({comp['linkedin']})")
-            
-            pitch_content = comp.get("generated_pitch", "")
-            
-            subject_default = f"Export Opportunity: High Quality {prod_name} from Pakistan"
-            if "Subject:" in pitch_content:
-                for line in pitch_content.split("\n"):
-                    if line.startswith("Subject:"):
-                        subject_default = line.replace("Subject:", "").strip()
-                        break
-            
-            email_subject = st.text_input("Email Subject:", value=subject_default, key=f"subj_{idx}")
-            email_body = st.text_area("Email Pitch Body:", value=pitch_content, height=200, key=f"body_{idx}")
-            
-            st.write("---")
-            target_email_input = st.text_input("Recipient Email Address:", value=comp['email'] if comp['email'] != "Not Found" else "", key=f"target_email_{idx}")
-            
-            if st.button(f"🚀 Send Single Email", key=f"send_btn_{idx}"):
-                if not sender_email or not sender_password:
-                    st.error("❌ Pehle Sidebar mein Sender Email aur Gmail App Password daraj karein!")
-                elif not target_email_input or target_email_input == "Not Found":
-                    st.error("❌ Sahi recipient email address daalein!")
-                else:
-                    with st.spinner("⏳ Sending email..."):
-                        clean_body = re.sub(r"^Subject:.*?\n", "", email_body, flags=re.MULTILINE).strip()
-                        success, msg = send_cold_email(
-                            sender_email, 
-                            sender_password, 
-                            target_email_input, 
-                            email_subject, 
-                            clean_body
-                        )
-                    if success:
-                        st.success(f"✅ Email SUCCESSFUL: {target_email_input}")
-                        st.balloons()
-                    else:
-                        st.error(f"❌ Email Failed: {msg}")
-
-    # Export Buttons (CSV & PDF)
-    export_df = pd.DataFrame(st.session_state['found_companies'])
-    csv_data = export_df.to_csv(index=False).encode('utf-8')
-    pdf_bytes = generate_pdf_report(prod_name, mkt_data, trf_data, st.session_state['found_companies'])
-    
-    st.divider()
-    col_csv, col_pdf = st.columns(2)
-    
-    with col_csv:
+    with col_pdf:
+        st.markdown("### 📄 Download PDF Report")
+        pdf_bytes = generate_pdf_report(
+            st.session_state.get('product_name', 'Export Item'),
+            st.session_state.get('market_data', {}),
+            st.session_state.get('tariff_data', {}),
+            st.session_state.get('found_companies', [])
+        )
         st.download_button(
-            label="📥 Download Scraped Leads (CSV)",
-            data=csv_data,
-            file_name=f"export_leads_{prod_name.replace(' ', '_')}.csv",
-            mime="text/csv",
-            type="primary",
-            use_container_width=True
+            label="📥 Download PDF Intelligence Report",
+            data=pdf_bytes,
+            file_name=f"Export_Report_{st.session_state.get('product_name', 'Item')}.pdf",
+            mime="application/pdf"
+        )
+
+    with col_pitch:
+        st.markdown("### ✉️ Direct Outreach Panel")
+        selected_company_title = st.selectbox(
+            "Select Buyer Lead to Pitch:",
+            [c['title'] for c in st.session_state['found_companies'][:3]]
         )
         
-    with col_pdf:
-        st.download_button(
-            label="📄 Download Market Report (PDF)",
-            data=pdf_bytes,
-            file_name=f"export_report_{prod_name.replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            type="secondary",
-            use_container_width=True
-        )
+        selected_comp = next((c for c in st.session_state['found_companies'] if c['title'] == selected_company_title), None)
+        
+        if selected_comp:
+            target_email = st.text_input("Recipient Email:", value=selected_comp.get('email', ''))
+            pitch_subject = st.text_input("Email Subject:", value=f"B2B Partnership Inquiry: Export Quality {st.session_state.get('product_name', '')}")
+            pitch_body = st.text_area("Generated Cold Pitch (Editable):", value=selected_comp.get('generated_pitch', ''), height=200)
+            
+            if st.button("🚀 Send Email Now"):
+                if not sender_email or not sender_password:
+                    st.warning("⚠️ Sidebar mein Sender Email aur App Password daalein!")
+                elif not target_email or target_email == "Not Found":
+                    st.error("⚠️ Sahi Recipient Email daalna zaroori hai!")
+                else:
+                    success, msg = send_cold_email(sender_email, sender_password, target_email, pitch_subject, pitch_body)
+                    if success:
+                        st.success(f"✅ {msg}")
+                    else:
+                        st.error(f"❌ Sending Failed: {msg}")
