@@ -110,7 +110,7 @@ st.title("🚀 Global Export AI Agent (Enterprise Edition)")
 st.caption("Powered by Global Buyer & Trade Database Integration (Comtrade + Hunter + Panjiva Engine)")
 
 # ---------------------------------------------
-# 2. SIDEBAR CREDENTIALS & USER PROFILE
+# 2. SIDEBAR CREDENTIALS & USER PROFILE (SECURED)
 # ---------------------------------------------
 st.sidebar.markdown(f"👤 **Logged in as:** `{st.session_state['current_user']}`")
 can_search, status_msg = check_and_update_limit(st.session_state['current_user'])
@@ -122,10 +122,17 @@ if st.sidebar.button("🔒 Logout"):
     st.rerun()
 
 st.sidebar.divider()
-st.sidebar.header("🔑 API & Trade Database Credentials")
-groq_key = st.sidebar.text_input("Groq API Key", value=DEFAULT_GROQ, type="password")
-tavily_key = st.sidebar.text_input("Tavily API Key", value=DEFAULT_TAVILY, type="password")
-hunter_key = st.sidebar.text_input("Hunter.io API Key (Optional)", value=DEFAULT_HUNTER, type="password", help="For verified corporate email enrichment")
+st.sidebar.header("🔑 API & Trade Security Engine")
+
+# System Backend se Keys Pick Karega - Direct UI par show NAHI hongi
+groq_key = DEFAULT_GROQ
+tavily_key = DEFAULT_TAVILY
+hunter_key = DEFAULT_HUNTER
+
+if groq_key and tavily_key:
+    st.sidebar.success("🔒 System API Keys Auto-Loaded & Secured!")
+else:
+    st.sidebar.warning("⚠️ `.env` file mein API Keys missing hain!")
 
 st.sidebar.divider()
 st.sidebar.subheader("🤖 AI Model Settings (Multi-LLM)")
@@ -140,8 +147,10 @@ selected_model = st.sidebar.selectbox(
 
 st.sidebar.divider()
 st.sidebar.subheader("📧 Sender Email Settings (Gmail SMTP)")
-sender_email = st.sidebar.text_input("Your Email", value=DEFAULT_EMAIL)
-sender_password = st.sidebar.text_input("App Password", value=DEFAULT_PASS, type="password", help="Gmail App Password")
+
+# Sensitive Email inputs ko password mask mein rakha gaya hai
+sender_email = st.sidebar.text_input("Your Email", value=DEFAULT_EMAIL, type="password")
+sender_password = st.sidebar.text_input("App Password", value=DEFAULT_PASS, type="password")
 
 # ==========================================
 # API 1: HUNTER.IO EMAIL VERIFIER API
